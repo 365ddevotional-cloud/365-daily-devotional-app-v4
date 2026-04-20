@@ -1,0 +1,425 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useState, useEffect, useMemo } from "react";
+import { format } from "date-fns";
+import { Loader2, Send, MessageSquare, Search, AlertTriangle, Paperclip, FileText, Image, Download, HandHeart } from "lucide-react";
+import type { PrayerRequest, ThreadMessage, PrayerAttachment } from "@shared/schema";
+
+const PRIORITY_LABELS: Record<string, string> = {
+  prayer_normal: "Prayer Request",
+  prayer_urgent: "Urgent Prayer",
+  counseling_normal: "Counseling",
+  counseling_urgent: "Urgent Counseling",
+};
+
+const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  new: { label: "Awaiting Reply", color: "bg-blue-100 text-blue-800" },
+  replied: { label: "Replied", color: "bg-green-100 text-green-800" },
+  closed: { label: "Closed", color: "bg-gray-100 text-gray-800" },
+};
+
+export default function MyPrayerRequests() {
+  const { toast } = useToast();
+  const [email, setEmail] = useState("");
+  const [searchedEmail, setSearchedEmail] = useState("");
+  const [selectedRequest, setSelectedRequest] = useState<PrayerRequest | null>(null);
+  const [followUpMessage, setFollowUpMessage] = useState("");
+
+  const {
+    data: requests = [],
+    isLoading,
+    isFetching: isFetchingRequests,
+    isError: isRequestsError,
+  } = useQuery<PrayerRequest[]>({
+    queryKey: ["/api/my-prayer-requests", searchedEmail],
+    queryFn: async () => {
+      if (!searchedEmail) return [];
+      const res = await fetch(`/api/my-prayer-requests?email=${encodeURIComponent(searchedEmail)}`);
+      if (!res.ok) {
+        throw new Error("Could not load your prayer requests.");
+      }
+      return res.json();
+    },
+    enabled: !!searchedEmail,
+    staleTime: 15_000,
+    refetchInterval: searchedEmail ? 30_000 : false,
+  });
+
+  const {
+    data: threadMessages = [],
+    isLoading: isThreadLoading,
+    isFetching: isFetchingThread,
+    isError: isThreadError,
+  } = useQuery<ThreadMessage[]>({
+    queryKey: ["/api/prayer-requests", selectedRequest?.id, "thread", searchedEmail],
+    queryFn: async () => {
+      if (!selectedRequest || !searchedEmail) return [];
+      const res = await fetch(`/api/prayer-requests/${selectedRequest.id}/thread?email=${encodeURIComponent(searchedEmail)}`);
+      if (!res.ok) {
+        throw new Error("Could not load this conversation.");
+      }
+      return res.json();
+    },
+    enabled: !!selectedRequest && !!searchedEmail,
+    placeholderData: (previousData) => previousData,
+    staleTime: 5_000,
+    refetchInterval: selectedRequest && searchedEmail ? 20_000 : false,
+  });
+
+  const { data: attachments = [], isLoading: isAttachmentsLoading } = useQuery<PrayerAttachment[]>({
+    queryKey: ["/api/prayer-requests", selectedRequest?.id, "attachments", searchedEmail],
+    queryFn: async () => {
+      if (!selectedRequest || !searchedEmail) return [];
+      const res = await fetch(`/api/prayer-requests/${selectedRequest.id}/attachments?email=${encodeURIComponent(searchedEmail)}`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!selectedRequest && !!searchedEmail,
+    placeholderData: (previousData) => previousData,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (selectedRequest && searchedEmail && threadMessages.length > 0) {
+      const hasUnreadAdmin = threadMessages.some(
+        (msg) => msg.senderType === "admin" && !msg.isRead
+      );
+      if (hasUnreadAdmin) {
+        fetch(`/api/prayer-requests/${selectedRequest.id}/mark-read`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: searchedEmail }),
+        }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/my-prayer-requests"] });
+        }).catch((err) => console.error("Failed to mark messages as read:", err));
+      }
+    }
+  }, [selectedRequest?.id, threadMessages, searchedEmail]);
+
+  const conversationMessages = useMemo<ThreadMessage[]>(() => {
+    if (!selectedRequest) {
+      return [];
+    }
+
+    const normalizedOriginalMessage = selectedRequest.message?.trim();
+    if (!normalizedOriginalMessage) {
+      return threadMessages;
+    }
+
+    const hasOriginalInThread = threadMessages.some(
+      (message) => message.senderType === "user" && message.message.trim() === normalizedOriginalMessage,
+    );
+
+    if (hasOriginalInThread) {
+      return threadMessages;
+    }
+
+    return [
+      {
+        id: selectedRequest.id * -1,
+        requestId: selectedRequest.id,
+        message: selectedRequest.message,
+        senderType: "user",
+        isRead: true,
+        readAt: null,
+        createdAt: selectedRequest.createdAt,
+      },
+      ...threadMessages,
+    ];
+  }, [selectedRequest, threadMessages]);
+
+  const getFileIcon = (contentType: string) => {
+    if (contentType.startsWith("image/")) {
+      return <Image className="w-4 h-4" />;
+    }
+    return <FileText className="w-4 h-4" />;
+  };
+
+  const sendMessageMutation = useMutation({
+    mutationFn: async ({ requestId, message }: { requestId: number; message: string }) => {
+      return apiRequest("POST", `/api/prayer-requests/${requestId}/thread`, {
+        message,
+        senderType: "user",
+        email: searchedEmail,
+      });
+    },
+    onSuccess: () => {
+      setFollowUpMessage("");
+      queryClient.invalidateQueries({ queryKey: ["/api/prayer-requests", selectedRequest?.id, "thread", searchedEmail] });
+      queryClient.invalidateQueries({ queryKey: ["/api/my-prayer-requests", searchedEmail] });
+      toast({ title: "Message sent", description: "Your follow-up message has been added to this conversation." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to send message. Please try again.", variant: "destructive" });
+    },
+  });
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !email.includes("@")) {
+      toast({ title: "Please enter a valid email address", variant: "destructive" });
+      return;
+    }
+    setSearchedEmail(email);
+    setSelectedRequest(null);
+  };
+
+  const handleSendFollowUp = () => {
+    if (!selectedRequest || !followUpMessage.trim()) return;
+    sendMessageMutation.mutate({ requestId: selectedRequest.id, message: followUpMessage });
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto py-8">
+      <div className="text-center mb-12 space-y-4">
+        <h1 className="font-serif text-4xl md:text-5xl font-bold text-primary">My Prayer Requests</h1>
+        <div className="w-24 h-1 bg-primary mx-auto rounded-full opacity-30" />
+        <p className="text-muted-foreground max-w-xl mx-auto">
+          View your submitted prayer requests and any replies from our team.
+        </p>
+      </div>
+
+      <Card className="bg-white dark:bg-card border-primary/10 shadow-xl shadow-primary/5 mb-6">
+        <CardContent className="p-6">
+          <form onSubmit={handleSearch} className="flex items-end gap-4 flex-wrap">
+            <div className="flex-1 min-w-[200px] space-y-2">
+              <Label htmlFor="email">Enter your email to view your requests</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="your@email.com"
+                data-testid="input-search-email"
+              />
+              <p className="text-xs text-muted-foreground">
+                We use your email only to locate your existing prayer conversations and replies.
+              </p>
+            </div>
+            <Button type="submit" disabled={isLoading || isFetchingRequests} data-testid="button-search">
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4 mr-2" />
+              )}
+              Find My Requests
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {searchedEmail && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-4">
+            <h3 className="font-serif text-lg font-semibold text-foreground">Your Requests</h3>
+            {isRequestsError ? (
+              <Card className="p-6 text-center text-destructive border-destructive/20 bg-destructive/5">
+                <AlertTriangle className="w-10 h-10 mx-auto mb-3" />
+                <p className="font-medium">We could not load your prayer requests right now.</p>
+                <p className="text-sm text-muted-foreground mt-2">Please try again in a moment.</p>
+              </Card>
+            ) : requests.length === 0 ? (
+              <Card className="p-6 text-center text-muted-foreground">
+                <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                <p>No prayer requests found for this email.</p>
+              </Card>
+            ) : (
+              <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                {requests.map((request) => (
+                  <div
+                    key={request.id}
+                    onClick={() => setSelectedRequest(request)}
+                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                      selectedRequest?.id === request.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted/50"
+                    }`}
+                    data-testid={`my-request-${request.id}`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-foreground">
+                          {request.subject || "Prayer Request"}
+                        </span>
+                        {request.priority?.includes("urgent") && (
+                          <Badge variant="destructive" className="text-xs">
+                            <AlertTriangle className="w-3 h-3 mr-1" />
+                            URGENT
+                          </Badge>
+                        )}
+                        {(request as any).unreadAdminReplies > 0 && (
+                          <Badge className="text-xs bg-primary text-primary-foreground" data-testid={`unread-badge-${request.id}`}>
+                            <MessageSquare className="w-3 h-3 mr-1" />
+                            {(request as any).unreadAdminReplies} new
+                          </Badge>
+                        )}
+                      </div>
+                      <Badge className={`text-xs ${STATUS_LABELS[request.status || "new"]?.color}`}>
+                        {STATUS_LABELS[request.status || "new"]?.label}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground line-clamp-2">{request.message}</p>
+                    <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground flex-wrap">
+                      <span>{PRIORITY_LABELS[request.priority || "prayer_normal"]}</span>
+                      <span>|</span>
+                      <span>{request.createdAt ? format(new Date(request.createdAt), "MMM d, yyyy") : ""}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            {selectedRequest ? (
+              <Card className="border-primary/10">
+                <CardHeader className="bg-muted/30 border-b">
+                  <div className="flex items-start justify-between gap-2 flex-wrap">
+                    <CardTitle className="font-serif text-xl text-foreground">
+                      {selectedRequest.subject || "Prayer Request"}
+                    </CardTitle>
+                    <Badge className={STATUS_LABELS[selectedRequest.status || "new"]?.color}>
+                      {STATUS_LABELS[selectedRequest.status || "new"]?.label}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    <Badge variant="outline">{PRIORITY_LABELS[selectedRequest.priority || "prayer_normal"]}</Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {selectedRequest.createdAt ? format(new Date(selectedRequest.createdAt), "MMMM d, yyyy") : ""}
+                    </span>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-6 space-y-4">
+                  <div className="bg-muted/30 p-4 rounded-lg">
+                    <p className="text-sm font-medium text-muted-foreground mb-1">Your original message:</p>
+                    <p className="text-foreground whitespace-pre-wrap">{selectedRequest.message}</p>
+                  </div>
+
+                  {attachments.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="font-medium text-foreground flex items-center gap-2">
+                        <Paperclip className="w-4 h-4" />
+                        Your Attachments ({attachments.length})
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                        {attachments.map((attachment) => (
+                          <a
+                            key={attachment.id}
+                            href={attachment.objectPath}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 p-2 bg-muted/30 rounded-md text-sm hover:bg-muted/50 transition-colors"
+                            data-testid={`my-attachment-${attachment.id}`}
+                          >
+                            {getFileIcon(attachment.contentType)}
+                            <span className="truncate max-w-[150px]">{attachment.fileName}</span>
+                            <Download className="w-3 h-3 text-muted-foreground" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(isThreadLoading || isFetchingThread) && (
+                    <div className="flex items-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2 text-sm text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading conversation updates...
+                    </div>
+                  )}
+
+                  {isThreadError && (
+                    <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive" data-testid="thread-error">
+                      We could not load the latest replies right now. Your original request is still shown below, and you can try refreshing again shortly.
+                    </div>
+                  )}
+
+                  {conversationMessages.some(m => m.senderType === "admin") && (
+                    <div className="bg-gradient-to-r from-primary/10 to-accent/10 p-3 rounded-lg border border-primary/20 flex items-center gap-3" data-testid="prayer-partner-banner">
+                      <HandHeart className="w-5 h-5 text-primary flex-shrink-0" />
+                      <p className="text-sm text-foreground font-medium">One of our prayer partners is praying for you right now.</p>
+                    </div>
+                  )}
+
+                  {conversationMessages.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="font-medium text-foreground">Conversation</h4>
+                      <p className="text-xs text-muted-foreground">
+                        Messages from you and the ministry team stay together in this conversation thread.
+                      </p>
+                      {conversationMessages.map((msg) => (
+                        <div
+                          key={msg.id}
+                          className={`p-3 rounded-lg ${
+                            msg.senderType === "admin"
+                              ? "bg-primary/10 ml-0"
+                              : "bg-muted/30 ml-4"
+                          }`}
+                          data-testid={`thread-message-${msg.id}`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                            <span className="text-xs font-medium text-muted-foreground">
+                              {msg.senderType === "admin" ? "365 Daily Devotional Team" : "You"}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              {msg.createdAt ? format(new Date(msg.createdAt), "MMM d, h:mm a") : ""}
+                            </span>
+                          </div>
+                          <p className="text-foreground text-sm">{msg.message}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {isAttachmentsLoading && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Loading attachments...
+                    </div>
+                  )}
+
+                  {selectedRequest.status !== "closed" && (
+                    <div className="space-y-2 pt-4 border-t">
+                      <Label>Send a follow-up message</Label>
+                      <Textarea
+                        placeholder="Write your message..."
+                        value={followUpMessage}
+                        onChange={(e) => setFollowUpMessage(e.target.value)}
+                        rows={3}
+                        className="resize-none"
+                        data-testid="textarea-followup"
+                      />
+                      <Button
+                        onClick={handleSendFollowUp}
+                        disabled={sendMessageMutation.isPending || !followUpMessage.trim()}
+                        data-testid="button-send-followup"
+                      >
+                        {sendMessageMutation.isPending ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Send className="w-4 h-4 mr-2" />
+                        )}
+                        Send Message
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground">
+                <MessageSquare className="w-12 h-12 mb-4 opacity-50" />
+                <p>Select a request to view details and replies</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
