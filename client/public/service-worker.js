@@ -1,5 +1,5 @@
-const CACHE_NAME = '365dd-v7';
-const API_CACHE_NAME = '365dd-api-v4';
+const CACHE_NAME = '365dd-v8';
+const API_CACHE_NAME = '365dd-api-v5';
 
 const STATIC_ASSETS = [
   '/',
@@ -33,7 +33,7 @@ function isStaticAsset(url) {
 }
 
 function isApiRequest(url) {
-  return url.pathname.startsWith('/api/');
+  return url.origin === self.location.origin && url.pathname.startsWith('/api/');
 }
 
 self.addEventListener('fetch', (event) => {
