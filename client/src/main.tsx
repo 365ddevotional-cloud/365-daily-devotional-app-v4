@@ -2,7 +2,9 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
+
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
 
 if (apiBaseUrl) {
   const originalFetch = window.fetch.bind(window);
@@ -11,6 +13,7 @@ if (apiBaseUrl) {
       return originalFetch(`${apiBaseUrl}${input}`, init);
     }
 
+
     if (input instanceof Request) {
       const requestUrl = new URL(input.url, window.location.origin);
       if (requestUrl.origin === window.location.origin && requestUrl.pathname.startsWith("/api")) {
@@ -18,13 +21,15 @@ if (apiBaseUrl) {
       }
     }
 
+
     return originalFetch(input, init);
   };
 }
 
+
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/service-worker.js?v=6')
+    navigator.serviceWorker.register('/service-worker.js?v=7')
       .then((registration) => {
         registration.addEventListener('updatefound', () => {
           const newWorker = registration.installing;
@@ -44,4 +49,6 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+
 createRoot(document.getElementById("root")!).render(<App />);
+
