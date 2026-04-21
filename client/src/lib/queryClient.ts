@@ -6,7 +6,16 @@ const isVercelHosted =
 const apiBaseUrl = isVercelHosted ? "" : rawApiBaseUrl;
 
 function withApiBase(url: string) {
-  if (!apiBaseUrl || /^https?:\/\//.test(url)) {
+  if (/^https?:\/\//.test(url)) {
+    if (isVercelHosted && rawApiBaseUrl && url.startsWith(rawApiBaseUrl)) {
+      const rewritten = url.slice(rawApiBaseUrl.length) || "/";
+      return rewritten.startsWith("/") ? rewritten : `/${rewritten}`;
+    }
+
+    return url;
+  }
+
+  if (!apiBaseUrl) {
     return url;
   }
 
