@@ -103,7 +103,7 @@ export function useTodayDevotional() {
   const lang = getLangParam();
   
   return useQuery({
-    queryKey: [api.devotionals.getToday.path, localDate, lang],
+    queryKey: [api.devotionals.getToday.path, lang],
     queryFn: async () => {
       if (!navigator.onLine) {
         const offline = await fallbackTodayFromIndexedDB(localDate);
@@ -112,7 +112,7 @@ export function useTodayDevotional() {
       }
 
       try {
-        const url = appendLangParam(`${api.devotionals.getToday.path}?clientDate=${localDate}&_t=${Date.now()}`);
+        const url = appendLangParam(`${api.devotionals.getToday.path}?_t=${Date.now()}`);
         const res = await fetch(url, { 
           credentials: "include",
           cache: "no-store",
