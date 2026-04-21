@@ -1,6 +1,9 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const isVercelHosted =
+  typeof window !== "undefined" && /(?:^|\.)vercel\.app$/i.test(window.location.hostname);
+const apiBaseUrl = isVercelHosted ? "" : rawApiBaseUrl;
 
 function withApiBase(url: string) {
   if (!apiBaseUrl || /^https?:\/\//.test(url)) {
