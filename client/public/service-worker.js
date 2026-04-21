@@ -1,5 +1,6 @@
-const CACHE_NAME = '365dd-v8';
-const API_CACHE_NAME = '365dd-api-v5';
+const CACHE_NAME = '365dd-v9';
+const API_CACHE_NAME = '365dd-api-v6';
+
 
 const STATIC_ASSETS = [
   '/',
@@ -8,12 +9,14 @@ const STATIC_ASSETS = [
   '/offline.html',
 ];
 
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
+
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
@@ -28,18 +31,25 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+
 function isStaticAsset(url) {
   return url.pathname.match(/\.(js|css|png|jpg|jpeg|svg|ico|woff2?|ttf|eot)$/);
 }
+
 
 function isApiRequest(url) {
   return url.origin === self.location.origin && url.pathname.startsWith('/api/');
 }
 
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
+
   const url = new URL(event.request.url);
+
+
+  if (url.origin !== self.location.origin) return;
 
   if (isApiRequest(url)) {
     event.respondWith(
@@ -68,72 +78,3 @@ self.addEventListener('fetch', (event) => {
             if (cached) return cached;
             return new Response(JSON.stringify({ error: 'offline' }), {
               status: 503,
-              headers: { 'Content-Type': 'application/json' }
-            });
-          });
-        });
-      })
-    );
-    return;
-  }
-
-  if (isStaticAsset(url)) {
-    event.respondWith(
-      fetch(event.request).then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      }).catch(() => {
-        return caches.match(event.request).then((cached) => {
-          if (cached) return cached;
-          return caches.match('/offline.html');
-        });
-      })
-    );
-    return;
-  }
-
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => {
-          return caches.match(event.request)
-            .then((cached) => cached || caches.match('/'))
-            .then((res) => res || caches.match('/offline.html'));
-        })
-    );
-    return;
-  }
-
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return response;
-      })
-      .catch(() =>
-        caches.match(event.request).then((res) => res || caches.match('/offline.html'))
-      )
-  );
-});
-
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
-  }
-  if (event.data && event.data.type === 'CLEAR_CACHE') {
-    caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key))));
-  }
-});
